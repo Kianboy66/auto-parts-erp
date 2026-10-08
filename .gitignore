@@ -18,3 +18,5 @@ backups/
 .vscode/
 .DS_Store
 Thumbs.db
+deploy*.tar.gz
+wheels*.tar.gz
