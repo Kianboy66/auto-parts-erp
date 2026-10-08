@@ -1282,6 +1282,40 @@ async def get_purchase(purchase_id: int, user: dict = Depends(current_user)):
         return result
 
 
+@app.delete("/api/purchases/{purchase_id}")
+async def delete_purchase(purchase_id: int, user: dict = Depends(current_user)):
+    if user["role"] != "admin":
+        raise HTTPException(403, "حذف فاکتور خرید فقط برای مدیر سیستم مجاز است.")
+    with db_transaction() as conn:
+        invoice = conn.execute("SELECT * FROM purchase_invoices WHERE id=?", (purchase_id,)).fetchone()
+        if not invoice:
+            raise HTTPException(404, "فاکتور خرید پیدا نشد.")
+        if conn.execute("SELECT COUNT(*) FROM purchase_returns WHERE purchase_invoice_id=?", (purchase_id,)).fetchone()[0]:
+            raise HTTPException(409, "فاکتور دارای سند مرجوعی است و حذف مستقیم آن مجاز نیست.")
+        items = conn.execute("SELECT * FROM purchase_invoice_items WHERE purchase_invoice_id=? ORDER BY id DESC", (purchase_id,)).fetchall()
+        for item in items:
+            if int(item["returned_qty"] or 0):
+                raise HTTPException(409, "فاکتور دارای کالای مرجوعی است و حذف مستقیم آن مجاز نیست.")
+            stock = stock_qty(conn, item["product_id"], invoice["warehouse_id"])
+            if stock < int(item["qty"]):
+                raise HTTPException(409, f"موجودی کالای «{item['product_name_snapshot']}» برای حذف فاکتور کافی نیست.")
+            set_stock(conn, item["product_id"], invoice["warehouse_id"], stock - int(item["qty"]))
+            history = conn.execute("SELECT id,old_purchase_rial FROM product_price_history WHERE product_id=? AND reason LIKE ? ORDER BY id DESC LIMIT 1", (item["product_id"], f"%{invoice['invoice_number']}%")).fetchone()
+            if history:
+                conn.execute("UPDATE products SET purchase_price_rial=? WHERE id=?", (history["old_purchase_rial"], item["product_id"]))
+                conn.execute("DELETE FROM product_price_history WHERE id=?", (history["id"],))
+            conn.execute("DELETE FROM inventory_movements WHERE movement_type='PURCHASE' AND reference_number=? AND product_id=?", (invoice["invoice_number"], item["product_id"]))
+            if item["batch_id"]:
+                conn.execute("DELETE FROM inventory_batches WHERE id=?", (item["batch_id"],))
+        conn.execute("DELETE FROM invoice_payments WHERE invoice_type='PURCHASE' AND invoice_id=?", (purchase_id,))
+        conn.execute("DELETE FROM cheques WHERE invoice_id=?", (purchase_id,))
+        conn.execute("DELETE FROM party_ledger_entries WHERE reference_type IN ('PURCHASE','PURCHASE_PAYMENT') AND reference_id=?", (purchase_id,))
+        conn.execute("DELETE FROM purchase_invoice_items WHERE purchase_invoice_id=?", (purchase_id,))
+        conn.execute("DELETE FROM purchase_invoices WHERE id=?", (purchase_id,))
+        log_audit(conn, user["id"], user["username"], user["role"], "DELETE", "PURCHASE_INVOICE", purchase_id, f"حذف فاکتور خرید {invoice['invoice_number']}", dict(invoice), None)
+        return {"deleted": True, "invoice_number": invoice["invoice_number"]}
+
+
 @app.post("/api/purchases/ocr/preview")
 async def purchase_ocr_preview(
     file: UploadFile = File(...),

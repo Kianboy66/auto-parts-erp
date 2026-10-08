@@ -262,9 +262,11 @@ def extract_invoice_from_pdf(conn, file_path: str, filename: str, supplier_id_ov
                 continue
             nums = [int(n.replace(",", "")) for n in re.findall(r"\d[\d,]*", norm) if len(n.replace(",", "")) >= 1]
             if len(nums) >= 2:
-                qty = next((n for n in nums if 1 <= n <= 500), 2)
+                qty = next((n for n in reversed(nums[:-1]) if 1 <= n <= 500), 2)
                 prices = [n for n in nums if n >= 50000]
-                unit_price = prices[0] if prices else 5000000
+                total_price = prices[-1] if prices else 0
+                unit_candidates = [n for n in prices[:-1] if n != total_price]
+                unit_price = unit_candidates[-1] if unit_candidates else (total_price // qty if total_price and qty else 5000000)
                 text_part = re.sub(r"[\d,\-\|/]+", " ", norm).strip()
                 if len(text_part) >= 3:
                     raw_items.append(
