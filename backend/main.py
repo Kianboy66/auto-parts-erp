@@ -32,6 +32,7 @@ from db import (
     log_audit,
 )
 from ocr_engine import ensure_sample_pdfs, extract_invoice_from_pdf
+from feature_extensions import ensure_extended_schema, register_extended_routes
 
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 UPLOAD_DIR = os.path.join(BASE_DIR, "data", "uploads")
@@ -39,7 +40,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(BACKUP_DIR, exist_ok=True)
 
 app = FastAPI(
-    title="البرز پارت | سامانه حسابداری فروشگاه قطعات خودرو",
+    title="حسابداری پورکیان | حسابداری پورکیان",
     description="API هسته عملیاتی مدیریت کالا، خرید، فروش، موجودی دو انبار، حساب طرفین و OCR فاکتور خرید.",
     version="1.0.0",
     docs_url="/api-docs",
@@ -528,13 +529,13 @@ def build_sale_detail(conn, sale_id: int):
 
 def auto_backup_exists_today(conn) -> bool:
     date_key = datetime.now(ZoneInfo("Asia/Tehran")).strftime("%Y%m%d")
-    prefix = f"alborzpart_auto_daily_{date_key}_%"
+    prefix = f"pourkian_auto_daily_{date_key}_%"
     return bool(conn.execute("SELECT id FROM backups WHERE filename LIKE ? LIMIT 1", (prefix,)).fetchone())
 
 
 def create_backup(backup_type: str = "AUTO_DAILY", username: str = "system") -> dict[str, Any]:
     stamp = datetime.now(ZoneInfo("Asia/Tehran")).strftime("%Y%m%d_%H%M%S")
-    filename = f"alborzpart_{backup_type.lower()}_{stamp}.zip"
+    filename = f"pourkian_{backup_type.lower()}_{stamp}.zip"
     destination = os.path.join(BACKUP_DIR, filename)
     tmp_db = os.path.join(BACKUP_DIR, f".snapshot_{stamp}.sqlite")
     src = sqlite3.connect(DB_PATH)
@@ -545,7 +546,7 @@ def create_backup(backup_type: str = "AUTO_DAILY", username: str = "system") -> 
         dst.close()
         src.close()
     manifest = {
-        "product": "Alborz Part ERP",
+        "product": "Pourkian Accounting",
         "created_at": datetime.now(ZoneInfo("Asia/Tehran")).isoformat(),
         "shamsi_date": get_shamsi_date(),
         "database_file": "erp.sqlite",
@@ -637,6 +638,7 @@ async def daily_backup_scheduler():
 @app.on_event("startup")
 async def startup_event():
     init_db()
+    ensure_extended_schema(DB_PATH, hash_password, now_iso, get_shamsi_date)
     ensure_sample_pdfs()
     # Rebase stored paths when a project folder has been moved or unpacked on another host.
     with db_transaction() as conn:
@@ -684,7 +686,7 @@ async def home():
 async def health():
     with db_read() as conn:
         conn.execute("SELECT 1").fetchone()
-    return {"status": "ok", "application": "Alborz Part ERP", "version": "1.0.0"}
+    return {"status": "ok", "application": "Pourkian Accounting", "version": "1.0.0"}
 
 
 @app.post("/api/auth/login")
@@ -998,7 +1000,7 @@ async def create_party(request: Request, user: dict = Depends(current_user)):
         cur = conn.execute(
             """INSERT INTO parties (party_role,customer_type,name,phone,national_id_or_economic_code,address,
                 credit_limit_rial,default_price_tier,notes,is_system,is_active,created_by,updated_by,created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,0,1,?,?,?)""",
+                VALUES (?,?,?,?,?,?,?,?,?,0,1,?,?,?)""",
             (
                 body.get("party_role", "CUSTOMER").upper(),
                 body.get("customer_type", "INDIVIDUAL").upper(),
@@ -2007,7 +2009,7 @@ async def export_report_xlsx(report_type: str = "sales", user: dict = Depends(cu
         output = io.BytesIO()
         workbook.save(output)
         output.seek(0)
-        filename = f"alborzpart_{report_type}_{datetime.now().strftime('%Y%m%d')}.xlsx"
+        filename = f"pourkian_{report_type}_{datetime.now().strftime('%Y%m%d')}.xlsx"
         return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename={filename}"})
 
 
@@ -2223,4 +2225,11 @@ async def convert_channel_order(order_id: int, user: dict = Depends(current_user
 
 @app.get("/api/docs/quickstart", response_class=HTMLResponse, include_in_schema=False)
 async def quickstart():
-    return HTMLResponse("""<!doctype html><html lang='fa' dir='rtl'><meta charset='utf-8'><body style='font:16px Tahoma;max-width:820px;margin:40px auto;line-height:2'><h1>راهنمای اجرای سامانه</h1><p>این نسخه روی یک میزبان محلی/شبکه داخلی اجرا می‌شود. نقطه ورود <code>/</code>، مستندات REST در <code>/api-docs</code> و وضعیت سرویس در <code>/health</code> است.</p><p>حساب آزمایشی مدیر: <b>admin</b> / <b>admin123</b>؛ اپراتور: <b>operator</b> / <b>op123</b>. پس از ورود اول، رمزهای نسخه آزمایشی به هش PBKDF2 ارتقا می‌یابند.</p><p>مبالغ در پایگاه داده به ریال ذخیره می‌شوند؛ رابط کاربری، تومان را با تقسیم بر ۱۰ نمایش می‌دهد. اسناد نهایی‌شده حذف/ویرایش نمی‌شوند و اصلاح با سند جداگانه انجام می‌شود.</p><p>برای نصب Laragon/VPS، README.fa.md را در بسته پروژه ببینید. این نمونه اجرایی از SQLite استفاده می‌کند؛ انتقال به MySQL/Laravel برای استقرار واقعی طبق سند نیازمندی انجام می‌شود.</p></body></html>""")
+    return HTMLResponse("""<!doctype html><html lang='fa' dir='rtl'><meta charset='utf-8'><body style='font:16px Tahoma;max-width:820px;margin:40px auto;line-height:2'><h1>راهنمای حسابداری پورکیان</h1><p>ورود از مسیر اصلی برنامه انجام می‌شود. مستندات REST در <code>/api-docs</code> و وضعیت سرویس در <code>/health</code> است.</p><p>نام کاربری و رمز عبور توسط مدیر اصلی سامانه مدیریت می‌شود.</p><p>کلیه حقوق نرم‌افزار برای حسابداری پورکیان محفوظ است.</p></body></html>""")
+
+
+register_extended_routes(app, {
+    'current_user': current_user, 'ensure_user': ensure_user, 'db_read': db_read, 'db_transaction': db_transaction,
+    'rows_dict': rows_dict, 'safe_int': safe_int, 'hash_password': hash_password, 'now_iso': now_iso,
+    'get_shamsi_date': get_shamsi_date, 'get_setting': get_setting, 'set_setting': set_setting, 'log_audit': log_audit,
+})
