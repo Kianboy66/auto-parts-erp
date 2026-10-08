@@ -1,4 +1,4 @@
-import os
+﻿import os
 import json
 import shutil
 import sqlite3
@@ -23,15 +23,42 @@ def _seed_password_hash(password: str) -> str:
     return f"pbkdf2_sha256${salt}${digest}"
 
 
+def _gregorian_to_jalali(year, month, day):
+    g_days_in_month = [31, 29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    gy = year - 1600
+    gm = month - 1
+    gd = day - 1
+    g_day_no = 365 * gy + (gy + 3) // 4 - (gy + 99) // 100 + (gy + 399) // 400
+    for index in range(gm):
+        g_day_no += g_days_in_month[index]
+    g_day_no += gd
+    j_day_no = g_day_no - 79
+    j_np = j_day_no // 12053
+    j_day_no %= 12053
+    jy = 979 + 33 * j_np + 4 * (j_day_no // 1461)
+    j_day_no %= 1461
+    if j_day_no >= 366:
+        jy += (j_day_no - 1) // 365
+        j_day_no = (j_day_no - 1) % 365
+    if j_day_no < 186:
+        jm = 1 + j_day_no // 31
+        jd = 1 + j_day_no % 31
+    else:
+        jm = 7 + (j_day_no - 186) // 30
+        jd = 1 + (j_day_no - 186) % 30
+    return jy, jm, jd
+
+
 def get_shamsi_now():
-    # Today's date in user's local timezone is 2026-10-03 -> 11 Mehr 1405 (1405/07/11)
     now = datetime.now(ZoneInfo("Asia/Tehran"))
-    return f"1405/07/11 - {now.strftime('%H:%M:%S')}"
+    year, month, day = _gregorian_to_jalali(now.year, now.month, now.day)
+    return f"{year:04d}/{month:02d}/{day:02d} - {now.strftime('%H:%M:%S')}"
 
 
 def get_shamsi_date():
-    return "1405/07/11"
-
+    now = datetime.now(ZoneInfo("Asia/Tehran"))
+    year, month, day = _gregorian_to_jalali(now.year, now.month, now.day)
+    return f"{year:04d}/{month:02d}/{day:02d}"
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=15)
