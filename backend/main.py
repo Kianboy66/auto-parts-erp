@@ -1109,9 +1109,7 @@ async def create_sale(request: Request, user: dict = Depends(current_user)):
     items = body.get("items") or []
     if not items:
         raise HTTPException(422, "حداقل یک قلم کالا برای فاکتور فروش لازم است.")
-    warehouse_id = safe_int(body.get("warehouse_id"), 1) or 1
-    if warehouse_id not in (1, 2):
-        raise HTTPException(422, "انبار انتخاب‌شده معتبر نیست.")
+    warehouse_id = safe_int(body.get("warehouse_id"))
     shamsi_date = app_date(body.get("shamsi_date"))
     customer_id = safe_int(body.get("customer_id"), 1) or 1
     invoice_discount = max(0, safe_int(body.get("invoice_discount_rial")))
@@ -1119,6 +1117,9 @@ async def create_sale(request: Request, user: dict = Depends(current_user)):
     if not payments and safe_int(body.get("paid_rial")) > 0:
         payments = [{"method": body.get("payment_method", "CASH"), "amount_rial": safe_int(body.get("paid_rial")), "cheque": body.get("cheque")}]
     with db_transaction() as conn:
+        warehouse = conn.execute("SELECT id FROM warehouses WHERE id=?", (warehouse_id,)).fetchone()
+        if not warehouse:
+            raise HTTPException(422, "انبار انتخاب‌شده معتبر نیست.")
         customer_row = conn.execute("SELECT * FROM parties WHERE id=? AND is_active=1", (customer_id,)).fetchone()
         if not customer_row:
             raise HTTPException(422, "مشتری انتخاب‌شده فعال نیست.")
@@ -1378,14 +1379,37 @@ async def create_purchase(request: Request, user: dict = Depends(current_user)):
     if not raw_items:
         raise HTTPException(422, "حداقل یک قلم کالا برای فاکتور خرید لازم است.")
     supplier_id = safe_int(body.get("supplier_id"))
-    warehouse_id = safe_int(body.get("warehouse_id"), 1) or 1
+    supplier_name = str(body.get("supplier_name") or "").strip()
+    warehouse_id = safe_int(body.get("warehouse_id"))
     shamsi_date = app_date(body.get("shamsi_date"))
     invoice_discount = max(0, safe_int(body.get("invoice_discount_rial")))
     payments = body.get("payments") or []
     if not payments and safe_int(body.get("paid_rial")) > 0:
         payments = [{"method": body.get("payment_method", "CASH"), "amount_rial": safe_int(body.get("paid_rial")), "cheque": body.get("cheque")}]
     with db_transaction() as conn:
+        warehouse = conn.execute("SELECT id FROM warehouses WHERE id=?", (warehouse_id,)).fetchone()
+        if not warehouse:
+            warehouse = conn.execute("SELECT id FROM warehouses ORDER BY is_default DESC,id LIMIT 1").fetchone()
+            if not warehouse:
+                raise HTTPException(422, "هیچ انباری برای ثبت خرید تعریف نشده است.")
+            warehouse_id = int(warehouse["id"])
         supplier = conn.execute("SELECT * FROM parties WHERE id=? AND is_active=1", (supplier_id,)).fetchone()
+        if (not supplier or supplier["party_role"] not in ("SUPPLIER", "BOTH")) and supplier_name:
+            supplier = conn.execute(
+                "SELECT * FROM parties WHERE name=? AND party_role IN ('SUPPLIER','BOTH') AND is_active=1 ORDER BY id LIMIT 1",
+                (supplier_name,),
+            ).fetchone()
+            if not supplier:
+                cur = conn.execute(
+                    """INSERT INTO parties (party_role,customer_type,name,credit_limit_rial,default_price_tier,notes,
+                        is_system,is_active,created_by,updated_by,created_at)
+                        VALUES ('SUPPLIER','CORPORATE',?,500000000,'RETAIL',?,0,1,?,?,?)""",
+                    (supplier_name, "ایجادشده هنگام ورود فاکتور خرید PDF", user["username"], user["username"], now_iso()),
+                )
+                supplier_id = int(cur.lastrowid)
+                supplier = conn.execute("SELECT * FROM parties WHERE id=?", (supplier_id,)).fetchone()
+            else:
+                supplier_id = int(supplier["id"])
         if not supplier or supplier["party_role"] not in ("SUPPLIER", "BOTH"):
             raise HTTPException(422, "تأمین‌کننده معتبر انتخاب کنید.")
         prepared = []

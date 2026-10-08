@@ -12,10 +12,38 @@ PERSIAN_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "0123
 def normalize_persian_text(text: str) -> str:
     if not text:
         return ""
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
     text = text.translate(PERSIAN_DIGITS)
     text = text.replace("ي", "ی").replace("ك", "ک").replace("ة", "ه").replace("\u200c", " ")
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def is_corrupt_pdf_text(text: str) -> bool:
+    if not text or len(text.strip()) < 20:
+        return True
+    control_count = sum(1 for char in text if ord(char) < 32 and char not in "\n\r\t")
+    replacement_count = text.count("�")
+    visible_count = max(1, len(text.strip()))
+    return (control_count + replacement_count) / visible_count > 0.01
+
+
+def ocr_pdf_page(page) -> str:
+    pix = page.get_pixmap(dpi=300)
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_img:
+        pix.save(tmp_img.name)
+        tmp_img_path = tmp_img.name
+    try:
+        proc = subprocess.run(
+            ["tesseract", tmp_img_path, "stdout", "-l", "fas+eng", "--psm", "6"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        return proc.stdout if proc.returncode == 0 else ""
+    finally:
+        if os.path.exists(tmp_img_path):
+            os.remove(tmp_img_path)
 
 
 def parse_ocr_number(value, default=0):
@@ -179,29 +207,15 @@ def extract_invoice_from_pdf(conn, file_path: str, filename: str, supplier_id_ov
         doc = fitz.open(file_path)
         for page in doc:
             page_text = page.get_text("text").strip()
-            if page_text:
-                raw_text += page_text + "\n"
-            else:
-                # Scanned page -> Render at 300 DPI and run Tesseract Farsi+English OCR
+            if is_corrupt_pdf_text(page_text):
                 ocr_used = True
                 engine_name = "موتور OCR فارسی (Tesseract 5 - بسته زبان fas+eng با دقت 300 DPI)"
-                pix = page.get_pixmap(dpi=300)
-                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_img:
-                    pix.save(tmp_img.name)
-                    tmp_img_path = tmp_img.name
                 try:
-                    proc = subprocess.run(
-                        ["tesseract", tmp_img_path, "stdout", "-l", "fas+eng", "--psm", "6"],
-                        capture_output=True,
-                        text=True,
-                        timeout=20,
-                    )
-                    raw_text += proc.stdout + "\n"
+                    raw_text += ocr_pdf_page(page) + "\n"
                 except Exception:
-                    pass
-                finally:
-                    if os.path.exists(tmp_img_path):
-                        os.remove(tmp_img_path)
+                    raw_text += page_text + "\n"
+            else:
+                raw_text += page_text + "\n"
         meta_title = (doc.metadata or {}).get("title", "")
         doc.close()
     except Exception as e:
@@ -210,9 +224,10 @@ def extract_invoice_from_pdf(conn, file_path: str, filename: str, supplier_id_ov
 
     # Determine preset or parsed rows
     extracted_rows = []
-    detected_supplier_id = supplier_id_override or 6
-    detected_invoice_no = "F-1405-9104"
-    detected_date = "1405/07/11"
+    raw_text = "\n".join(normalize_persian_text(line) for line in raw_text.splitlines())
+    detected_supplier_id = supplier_id_override or None
+    detected_invoice_no = ""
+    detected_date = ""
 
     # Check structured ROW lines in text or OCR output
     for line in raw_text.splitlines():
