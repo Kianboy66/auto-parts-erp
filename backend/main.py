@@ -40,7 +40,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(BACKUP_DIR, exist_ok=True)
 
 app = FastAPI(
-    title="حسابداری پورکیان | حسابداری پورکیان",
+    title="حسابداری پورکیان | سامانه مدیریت فروش و انبار",
     description="API هسته عملیاتی مدیریت کالا، خرید، فروش، موجودی دو انبار، حساب طرفین و OCR فاکتور خرید.",
     version="1.0.0",
     docs_url="/api-docs",
